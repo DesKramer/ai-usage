@@ -36,18 +36,16 @@ final class UsageStore: ObservableObject {
     func start() {
         guard !hasStarted else { return }
         hasStarted = true
-        // Never interrupt the user with a Keychain prompt at launch. If macOS blocks the
-        // non-interactive read, the user can explicitly retry with the Refresh button.
-        Task { await refresh(allowKeychainPrompt: false) }
+        Task { await refresh(forceCredentialReload: false) }
         timer = Timer.scheduledTimer(withTimeInterval: Self.refreshInterval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                await self?.refresh(allowKeychainPrompt: false)
+                await self?.refresh(forceCredentialReload: false)
             }
         }
     }
 
     func refreshFromButton() {
-        Task { await refresh(allowKeychainPrompt: true) }
+        Task { await refresh(forceCredentialReload: true) }
     }
 
     func setLaunchAtLogin(_ enabled: Bool) {
@@ -64,7 +62,7 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    private func refresh(allowKeychainPrompt: Bool) async {
+    private func refresh(forceCredentialReload: Bool) async {
         guard !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
@@ -76,7 +74,7 @@ final class UsageStore: ObservableObject {
         }
         let claudeTask = Task.detached(priority: .userInitiated) {
             await Self.outcome(for: .claude) {
-                try await ClaudeUsageClient().fetch(allowKeychainPrompt: allowKeychainPrompt)
+                try await ClaudeUsageClient().fetch(forceCredentialReload: forceCredentialReload)
             }
         }
 

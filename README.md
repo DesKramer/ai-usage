@@ -22,7 +22,7 @@ Move `build/UsageBar.app` to `/Applications` before enabling **Open at Login** s
 
 ## How credentials are used
 
-UsageBar reads Codex credentials from `~/.codex/auth.json` and Claude credentials from the `Claude Code-credentials` item in Keychain. On the first manual refresh, macOS may ask for Keychain permission. Choose **Always Allow** so automatic refreshes can read Claude usage without asking again.
+UsageBar reads Codex credentials from `~/.codex/auth.json` and Claude credentials from the `Claude Code-credentials` item in Keychain. It reads that item through `/usr/bin/security`, the same tool Claude Code uses to create and read it, so macOS does not ask for your password. The token is kept in memory and the Keychain item is read again only when the token is about to expire, the API rejects it, or you click Refresh.
 
 The build script uses the first available Apple Development signing identity, or the identity set in `USAGEBAR_SIGNING_IDENTITY`. This gives UsageBar a stable identity so Keychain can remember that approval across rebuilds. It falls back to ad-hoc signing when no development identity is available; ad-hoc builds may need approval again after rebuilding.
 

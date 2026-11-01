@@ -1,6 +1,4 @@
 import Foundation
-import LocalAuthentication
-import Security
 
 struct CodexUsageClient: Sendable {
     private struct AuthFile: Decodable {
@@ -137,7 +135,53 @@ struct ClaudeUsageClient: Sendable {
 
         struct OAuth: Decodable {
             let accessToken: String?
+            let expiresAt: Double?
             let subscriptionType: String?
+        }
+    }
+
+    struct StoredCredentials: Sendable, Equatable {
+        let token: String
+        let subscription: String?
+        let expiresAt: Date?
+
+        var isFresh: Bool {
+            guard let expiresAt else { return true }
+            return expiresAt.timeIntervalSinceNow > 60
+        }
+    }
+
+    /// Holds the last token read from Keychain so routine refreshes don't touch Keychain at
+    /// all. Claude Code rewrites its Keychain item each time it refreshes the token, so the
+    /// item is re-read only when the cached token is near expiry or the API rejects it.
+    private actor CredentialCache {
+        static let shared = CredentialCache()
+
+        private var credentials: StoredCredentials?
+        private var keychainDenied = false
+
+        func load(forceReload: Bool) throws -> StoredCredentials {
+            if !forceReload, let credentials, credentials.isFresh {
+                return credentials
+            }
+            // After a denial, wait for the user to press Refresh rather than asking again
+            // from the background timer.
+            if keychainDenied, !forceReload {
+                throw UsageError.claudeKeychainDenied
+            }
+            do {
+                let fresh = try ClaudeUsageClient.readKeychain()
+                credentials = fresh
+                keychainDenied = false
+                return fresh
+            } catch UsageError.claudeKeychainDenied {
+                keychainDenied = true
+                throw UsageError.claudeKeychainDenied
+            }
+        }
+
+        func invalidate(_ rejected: StoredCredentials) {
+            if credentials == rejected { credentials = nil }
         }
     }
 
@@ -173,8 +217,22 @@ struct ClaudeUsageClient: Sendable {
         }
     }
 
-    func fetch(allowKeychainPrompt: Bool) async throws -> ProviderUsage {
-        let credentials = try readCredentials(allowPrompt: allowKeychainPrompt)
+    func fetch(forceCredentialReload: Bool) async throws -> ProviderUsage {
+        let cache = CredentialCache.shared
+        let credentials = try await cache.load(forceReload: forceCredentialReload)
+        do {
+            return try await fetch(with: credentials)
+        } catch UsageError.unauthorized {
+            // Claude Code may have refreshed the token since it was cached. Retry once with
+            // whatever is in Keychain now.
+            await cache.invalidate(credentials)
+            let reloaded = try await cache.load(forceReload: false)
+            guard reloaded.token != credentials.token else { throw UsageError.unauthorized("Claude") }
+            return try await fetch(with: reloaded)
+        }
+    }
+
+    private func fetch(with credentials: StoredCredentials) async throws -> ProviderUsage {
         var request = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 20
@@ -215,51 +273,12 @@ struct ClaudeUsageClient: Sendable {
             message: nil)
     }
 
-    private func readCredentials(allowPrompt: Bool) throws -> (token: String, subscription: String?) {
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "Claude Code-credentials",
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        if !allowPrompt {
-            let context = LAContext()
-            context.interactionNotAllowed = true
-            query[kSecUseAuthenticationContext as String] = context
-        }
-
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        query.removeAll(keepingCapacity: false)
-
-        if status == errSecSuccess, let data = result as? Data, let credentials = parseCredentials(data) {
-            return credentials
-        }
-
-        // Claude Code's item can deny direct reads to an ad-hoc signed local app. The macOS
-        // security utility follows the item's normal Keychain access prompt, so use it only
-        // for a user-initiated refresh and never from the background timer.
-        if allowPrompt, let data = readViaSecurityCLI(), let credentials = parseCredentials(data) {
-            return credentials
-        }
-
-        if status == errSecUserCanceled || status == errSecAuthFailed || status == errSecInteractionNotAllowed
-            || status == errSecNoAccessForItem
-        {
-            throw UsageError.claudeKeychainDenied
-        }
-        throw UsageError.missingClaudeLogin
-    }
-
-    private func parseCredentials(_ data: Data) -> (token: String, subscription: String?)? {
-        guard let root = try? JSONDecoder().decode(Credentials.self, from: data),
-              let token = root.claudeAiOauth?.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !token.isEmpty
-        else { return nil }
-        return (token, root.claudeAiOauth?.subscriptionType)
-    }
-
-    private func readViaSecurityCLI() -> Data? {
+    /// Reads Claude Code's Keychain item through /usr/bin/security, the same way Claude Code
+    /// itself reads it. Claude Code creates the item with that tool, so the item's access list
+    /// trusts it and the read never asks for a password. Reading the item directly with
+    /// SecItemCopyMatching would instead require UsageBar to be on the access list, and that
+    /// approval is lost whenever Claude Code rewrites the item after a token refresh.
+    fileprivate static func readKeychain() throws -> StoredCredentials {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
         process.arguments = ["find-generic-password", "-s", "Claude Code-credentials", "-w"]
@@ -269,12 +288,28 @@ struct ClaudeUsageClient: Sendable {
         process.standardInput = FileHandle.nullDevice
         do {
             try process.run()
-            process.waitUntilExit()
         } catch {
-            return nil
+            throw UsageError.claudeKeychainDenied
         }
-        guard process.terminationStatus == 0 else { return nil }
-        return output.fileHandleForReading.readDataToEndOfFile()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        // 44 is errSecItemNotFound: Claude Code has never signed in on this Mac.
+        if process.terminationStatus == 44 { throw UsageError.missingClaudeLogin }
+        guard process.terminationStatus == 0 else { throw UsageError.claudeKeychainDenied }
+        guard let credentials = parseCredentials(data) else { throw UsageError.missingClaudeLogin }
+        return credentials
+    }
+
+    static func parseCredentials(_ data: Data) -> StoredCredentials? {
+        guard let root = try? JSONDecoder().decode(Credentials.self, from: data),
+              let token = root.claudeAiOauth?.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !token.isEmpty
+        else { return nil }
+        return StoredCredentials(
+            token: token,
+            subscription: root.claudeAiOauth?.subscriptionType,
+            expiresAt: root.claudeAiOauth?.expiresAt.map { Date(timeIntervalSince1970: $0 / 1000) })
     }
 
     private static func displayPlan(_ raw: String) -> String {
