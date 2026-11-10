@@ -5,6 +5,8 @@ struct UsageBarApp: App {
     @StateObject private var store: UsageStore
 
     init() {
+        LoginItemControl.handleIfRequested()
+
         let store = UsageStore()
         _store = StateObject(wrappedValue: store)
         store.start()

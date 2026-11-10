@@ -19,6 +19,12 @@ if [[ -z "$SIGNING_IDENTITY" ]]; then
     SIGNING_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
         | awk -F'"' '/Apple Development:/{print $2; exit}')"
 fi
+if [[ -z "$SIGNING_IDENTITY" ]]; then
+    # Fall back to any valid code signing identity (e.g. a local development cert) so the
+    # app keeps a stable identity across rebuilds instead of being ad-hoc signed.
+    SIGNING_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
+        | awk -F'"' '/^ *[0-9]+\)/{print $2; exit}')"
+fi
 
 if [[ -n "$SIGNING_IDENTITY" ]]; then
     codesign --force --deep --sign "$SIGNING_IDENTITY" "$APP"
