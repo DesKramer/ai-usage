@@ -7,7 +7,7 @@
 
 A small native macOS menu bar app for Claude Code and Codex subscription limits.
 
-The menu bar shows the lowest remaining allowance for each provider. Open it to see the 5-hour and weekly windows, reset times, a locally recorded 12-hour drawdown chart, and the last successful update.
+The menu bar shows the lowest remaining allowance for each provider. Open it to see the 5-hour and weekly windows, Claude model-specific weekly limits such as Fable, reset times, a locally recorded 12-hour drawdown chart, and the last successful update.
 
 ## Requirements
 

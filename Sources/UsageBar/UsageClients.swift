@@ -90,6 +90,7 @@ struct CodexUsageClient: Sendable {
             plan: payload.planType.map(Self.displayPlan),
             session: payload.rateLimit?.primary?.model,
             weekly: payload.rateLimit?.secondary?.model,
+            scopedWeekly: nil,
             updatedAt: Date(),
             message: nil)
     }
@@ -188,10 +189,12 @@ struct ClaudeUsageClient: Sendable {
     private struct Response: Decodable {
         let fiveHour: Window?
         let sevenDay: Window?
+        let limits: [Limit]?
 
         enum CodingKeys: String, CodingKey {
             case fiveHour = "five_hour"
             case sevenDay = "seven_day"
+            case limits
         }
 
         struct Window: Decodable {
@@ -206,14 +209,58 @@ struct ClaudeUsageClient: Sendable {
             var model: UsageWindow {
                 UsageWindow(
                     usedPercent: utilization,
-                    resetsAt: resetsAt.flatMap(Self.parseDate))
+                    resetsAt: resetsAt.flatMap(Response.parseDate))
+            }
+        }
+
+        struct Limit: Decodable {
+            let kind: String?
+            let percent: Double?
+            let resetsAt: String?
+            let scope: Scope?
+
+            enum CodingKeys: String, CodingKey {
+                case kind
+                case percent
+                case resetsAt = "resets_at"
+                case scope
             }
 
-            private static func parseDate(_ value: String) -> Date? {
-                let fractional = ISO8601DateFormatter()
-                fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+            struct Scope: Decodable {
+                let model: Model?
+
+                struct Model: Decodable {
+                    let displayName: String?
+
+                    enum CodingKeys: String, CodingKey {
+                        case displayName = "display_name"
+                    }
+                }
             }
+
+            var scopedUsage: ScopedUsage? {
+                guard kind == "weekly_scoped",
+                      let name = scope?.model?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !name.isEmpty,
+                      let percent
+                else { return nil }
+
+                return ScopedUsage(
+                    name: name,
+                    window: UsageWindow(
+                        usedPercent: percent,
+                        resetsAt: resetsAt.flatMap(Response.parseDate)))
+            }
+        }
+
+        var scopedWeekly: [ScopedUsage] {
+            (limits ?? []).compactMap(\.scopedUsage)
+        }
+
+        private static func parseDate(_ value: String) -> Date? {
+            let fractional = ISO8601DateFormatter()
+            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
         }
     }
 
@@ -260,16 +307,25 @@ struct ClaudeUsageClient: Sendable {
         guard http.statusCode == 200 else {
             throw UsageError.server("Claude", http.statusCode)
         }
+        return try Self.decodeUsageResponse(data, subscription: credentials.subscription)
+    }
+
+    static func decodeUsageResponse(
+        _ data: Data,
+        subscription: String?,
+        updatedAt: Date = Date()
+    ) throws -> ProviderUsage {
         guard let payload = try? JSONDecoder().decode(Response.self, from: data) else {
             throw UsageError.badResponse("Claude")
         }
 
         return ProviderUsage(
             provider: .claude,
-            plan: credentials.subscription.map(Self.displayPlan),
+            plan: subscription.map(Self.displayPlan),
             session: payload.fiveHour?.model,
             weekly: payload.sevenDay?.model,
-            updatedAt: Date(),
+            scopedWeekly: payload.scopedWeekly,
+            updatedAt: updatedAt,
             message: nil)
     }
 

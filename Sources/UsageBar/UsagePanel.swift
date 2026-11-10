@@ -19,7 +19,8 @@ struct UsagePanel: View {
                 fallbackPlan: "Claude Code",
                 brand: .claude,
                 color: Color(red: 0.86, green: 0.39, blue: 0.25),
-                dashboard: URL(string: "https://claude.ai/settings/usage")!)
+                dashboard: URL(string: "https://claude.ai/settings/usage")!,
+                scopedWeekly: store.claude?.scopedWeekly ?? [])
             Divider().padding(.leading, 14)
             providerRow(
                 usage: store.codex,
@@ -61,7 +62,8 @@ struct UsagePanel: View {
         fallbackPlan: String,
         brand: BrandIcon.Brand,
         color: Color,
-        dashboard: URL
+        dashboard: URL,
+        scopedWeekly: [ScopedUsage] = []
     ) -> some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .top, spacing: 12) {
@@ -93,6 +95,20 @@ struct UsagePanel: View {
                     .frame(width: windowWidth, alignment: .leading)
                 WindowCell(window: usage?.weekly)
                     .frame(width: windowWidth, alignment: .leading)
+            }
+
+            ForEach(scopedWeekly) { scoped in
+                HStack(alignment: .top, spacing: 12) {
+                    Text(scoped.name)
+                        .font(.subheadline.weight(.medium))
+                        .frame(width: nameWidth, alignment: .leading)
+                    Color.clear
+                        .frame(width: windowWidth, height: 1)
+                    WindowCell(window: scoped.window)
+                        .frame(width: windowWidth, alignment: .leading)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(scoped.name) weekly usage")
             }
 
             if let message = usage?.message ?? store.errors[provider] {

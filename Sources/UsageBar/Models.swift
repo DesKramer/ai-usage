@@ -9,6 +9,13 @@ struct UsageWindow: Codable, Equatable, Sendable {
     }
 }
 
+struct ScopedUsage: Codable, Equatable, Sendable, Identifiable {
+    let name: String
+    let window: UsageWindow
+
+    var id: String { name }
+}
+
 struct ProviderUsage: Codable, Equatable, Sendable {
     enum Provider: String, Codable, Hashable, Sendable {
         case claude
@@ -19,6 +26,7 @@ struct ProviderUsage: Codable, Equatable, Sendable {
     var plan: String?
     var session: UsageWindow?
     var weekly: UsageWindow?
+    var scopedWeekly: [ScopedUsage]?
     var updatedAt: Date
     var message: String?
 
