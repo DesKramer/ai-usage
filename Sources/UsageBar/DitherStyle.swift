@@ -37,6 +37,52 @@ enum DitherRenderer {
         }
     }
 
+    static func drawHorizontalGradient(
+        in context: inout GraphicsContext,
+        rect: CGRect,
+        spacing: CGFloat,
+        dotSize: CGFloat,
+        maxDensity: Double,
+        opacity: Double,
+        phase: Int = 0,
+        color: Color = DitherPalette.blue
+    ) {
+        guard spacing > 0, dotSize > 0, !rect.isEmpty else { return }
+
+        let bayer4 = [
+            0, 8, 2, 10,
+            12, 4, 14, 6,
+            3, 11, 1, 9,
+            15, 7, 13, 5,
+        ]
+        let rowCount = Int(ceil(rect.height / spacing)) + 1
+        let columnCount = Int(ceil(rect.width / spacing)) + 1
+        let dotColor = color.opacity(opacity)
+        let densityCeiling = min(1, max(0, maxDensity))
+
+        for row in 0...rowCount {
+            let offset = (row + phase).isMultiple(of: 2) ? 0 : spacing / 2
+            let y = rect.minY + CGFloat(row) * spacing
+
+            for column in 0...columnCount {
+                let x = rect.minX + CGFloat(column) * spacing + offset
+                let progress = min(1, max(0, Double((x - rect.minX) / rect.width)))
+                let density = densityCeiling * (0.06 + 0.94 * pow(progress, 3.2))
+                let patternColumn = (column + phase) & 3
+                let patternRow = (row + phase * 2) & 3
+                let threshold = (Double(bayer4[patternRow * 4 + patternColumn]) + 0.5) / 16
+                guard threshold < density else { continue }
+
+                let dot = CGRect(
+                    x: x - dotSize / 2,
+                    y: y - dotSize / 2,
+                    width: dotSize,
+                    height: dotSize)
+                context.fill(Path(ellipseIn: dot), with: .color(dotColor))
+            }
+        }
+    }
+
     static func drawAreaGradient(
         in context: inout GraphicsContext,
         rect: CGRect,
@@ -124,6 +170,31 @@ struct DitherPattern: View {
                 rect: CGRect(origin: .zero, size: size),
                 spacing: spacing,
                 dotSize: dotSize,
+                opacity: opacity,
+                phase: phase,
+                color: color)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+struct HorizontalDitherGradient: View {
+    var spacing: CGFloat = 2.5
+    var dotSize: CGFloat = 1.1
+    var maxDensity: Double = 1
+    var opacity: Double = 0.72
+    var phase = 0
+    var color = DitherPalette.blue
+
+    var body: some View {
+        Canvas { context, size in
+            DitherRenderer.drawHorizontalGradient(
+                in: &context,
+                rect: CGRect(origin: .zero, size: size),
+                spacing: spacing,
+                dotSize: dotSize,
+                maxDensity: maxDensity,
                 opacity: opacity,
                 phase: phase,
                 color: color)

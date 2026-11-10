@@ -445,7 +445,11 @@ private struct UsageProgress: View {
             ZStack(alignment: .leading) {
                 Capsule()
                     .fill(.primary.opacity(0.055))
-                DitherPattern(spacing: 2.5, dotSize: 1.1, opacity: 0.72)
+                HorizontalDitherGradient(
+                    spacing: 2,
+                    dotSize: 1.5,
+                    maxDensity: 1,
+                    opacity: 1)
                     .frame(width: width)
                     .clipShape(Capsule())
                 Capsule()
