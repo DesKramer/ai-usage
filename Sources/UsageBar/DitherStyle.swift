@@ -37,25 +37,71 @@ enum DitherRenderer {
         }
     }
 
-    static func drawCheckerboard(
+    static func drawAreaGradient(
         in context: inout GraphicsContext,
         rect: CGRect,
+        points: [CGPoint],
         cellSize: CGFloat,
+        maxDensity: Double,
         opacity: Double,
         phase: Int = 0,
         color: Color
     ) {
-        guard cellSize > 0, !rect.isEmpty else { return }
+        guard cellSize > 0, !rect.isEmpty, points.count > 1 else { return }
 
+        // Ordered dithering keeps the fade stable between redraws. Density is measured
+        // from the series line to the bottom of the plot for each column, so short and
+        // tall parts of the graph get the same proportional fade.
+        let bayer4 = [
+            0, 8, 2, 10,
+            12, 4, 14, 6,
+            3, 11, 1, 9,
+            15, 7, 13, 5,
+        ]
         let rowCount = Int(ceil(rect.height / cellSize))
         let columnCount = Int(ceil(rect.width / cellSize))
         let squareColor = color.opacity(opacity)
+        let densityCeiling = min(1, max(0, maxDensity))
+        var segment = 0
 
-        for row in 0...rowCount {
-            for column in 0...columnCount where (row + column + phase).isMultiple(of: 2) {
+        for column in 0..<columnCount {
+            let squareX = rect.minX + CGFloat(column) * cellSize
+            let sampleX = squareX + cellSize / 2
+            guard sampleX >= points[0].x, sampleX <= points[points.count - 1].x else {
+                continue
+            }
+
+            while segment < points.count - 2, sampleX > points[segment + 1].x {
+                segment += 1
+            }
+
+            let leading = points[segment]
+            let trailing = points[segment + 1]
+            let segmentWidth = trailing.x - leading.x
+            let fraction = segmentWidth > 0
+                ? min(1, max(0, (sampleX - leading.x) / segmentWidth))
+                : 1
+            let lineY = min(
+                rect.maxY,
+                max(rect.minY, leading.y + (trailing.y - leading.y) * fraction))
+            let fillHeight = rect.maxY - lineY
+            guard fillHeight > 0 else { continue }
+
+            for row in 0..<rowCount {
+                let squareY = rect.minY + CGFloat(row) * cellSize
+                let sampleY = squareY + cellSize / 2
+                guard sampleY >= lineY, sampleY <= rect.maxY else { continue }
+
+                let depth = min(1, max(0, Double((sampleY - lineY) / fillHeight)))
+                let density = densityCeiling * pow(1 - depth, 4.5)
+                let patternColumn = (column + phase) & 3
+                let patternRow = (row + phase * 2) & 3
+                let threshold = (Double(bayer4[patternRow * 4 + patternColumn]) + 0.5) / 16
+                guard threshold < density else { continue }
+
                 let square = CGRect(
-                    x: rect.minX + CGFloat(column) * cellSize,
-                    y: rect.minY + CGFloat(row) * cellSize,
+                    x: squareX,
+                    y: squareY,
                     width: cellSize,
                     height: cellSize)
                 context.fill(Path(square), with: .color(squareColor))

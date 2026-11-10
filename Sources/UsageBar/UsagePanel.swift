@@ -361,10 +361,12 @@ private struct DitherDrawdownChart: View {
 
         var fillContext = context
         fillContext.clip(to: area)
-        DitherRenderer.drawCheckerboard(
+        DitherRenderer.drawAreaGradient(
             in: &fillContext,
             rect: plot,
+            points: points,
             cellSize: 2,
+            maxDensity: provider == .claude ? 0.94 : 0.82,
             opacity: provider == .claude ? 0.82 : 0.72,
             phase: provider == .claude ? 0 : 1,
             color: color)
