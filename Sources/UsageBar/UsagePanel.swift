@@ -10,7 +10,7 @@ struct UsagePanel: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            DitherDivider()
+            Divider()
             providerRow(
                 usage: store.claude,
                 provider: .claude,
@@ -19,7 +19,7 @@ struct UsagePanel: View {
                 brand: .claude,
                 dashboard: URL(string: "https://claude.ai/settings/usage")!,
                 scopedWeekly: store.claude?.scopedWeekly ?? [])
-            DitherDivider().padding(.leading, 14)
+            Divider().padding(.leading, 14)
             providerRow(
                 usage: store.codex,
                 provider: .codex,
@@ -27,18 +27,13 @@ struct UsagePanel: View {
                 fallbackPlan: "ChatGPT",
                 brand: .codex,
                 dashboard: URL(string: "https://chatgpt.com/settings/usage?tab=overview")!)
-            DitherDivider()
+            Divider()
             drawdownChart
-            DitherDivider()
+            Divider()
             footer
         }
         .frame(width: 410)
-        .background {
-            ZStack {
-                Rectangle().fill(.ultraThinMaterial)
-                DitherPattern(spacing: 6, dotSize: 0.8, opacity: 0.055)
-            }
-        }
+        .background(.ultraThinMaterial)
     }
 
     private var header: some View {
@@ -55,9 +50,6 @@ struct UsagePanel: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .background {
-            DitherPattern(spacing: 5, dotSize: 0.9, opacity: 0.045, phase: 1)
-        }
     }
 
     private func providerRow(
@@ -126,13 +118,6 @@ struct UsagePanel: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
-        .background {
-            DitherPattern(
-                spacing: provider == .claude ? 6 : 7,
-                dotSize: 0.8,
-                opacity: 0.035,
-                phase: provider == .claude ? 0 : 1)
-        }
     }
 
     private var drawdownChart: some View {
@@ -152,12 +137,10 @@ struct UsagePanel: View {
             HStack(spacing: 14) {
                 DitherLegendItem(
                     name: "Claude",
-                    phase: 0,
                     dashed: false,
                     color: DitherPalette.claude)
                 DitherLegendItem(
                     name: "Codex",
-                    phase: 1,
                     dashed: true,
                     color: DitherPalette.codex)
             }
@@ -167,9 +150,6 @@ struct UsagePanel: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
-        .background {
-            DitherPattern(spacing: 8, dotSize: 0.7, opacity: 0.03, phase: 1)
-        }
     }
 
     private var footer: some View {
@@ -200,7 +180,7 @@ struct UsagePanel: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
 
-            DitherDivider().padding(.leading, 14)
+            Divider().padding(.leading, 14)
 
             HStack {
                 Toggle("Open at Login", isOn: Binding(
@@ -233,7 +213,6 @@ struct UsagePanel: View {
 
 private struct DitherLegendItem: View {
     let name: String
-    let phase: Int
     let dashed: Bool
     let color: Color
 
@@ -242,12 +221,7 @@ private struct DitherLegendItem: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 2)
                     .fill(.primary.opacity(0.04))
-                DitherPattern(
-                    spacing: phase == 0 ? 3 : 4,
-                    dotSize: 0.9,
-                    opacity: 0.38,
-                    phase: phase,
-                    color: color)
+                DitherPattern(cellSize: 2, coverage: 0.625, color: color)
                     .clipShape(RoundedRectangle(cornerRadius: 2))
                 Canvas { context, size in
                     var path = Path()
@@ -354,22 +328,25 @@ private struct DitherDrawdownChart: View {
             line.addLine(to: point)
         }
 
-        var area = line
-        area.addLine(to: CGPoint(x: points.last?.x ?? first.x, y: plot.maxY))
-        area.addLine(to: CGPoint(x: first.x, y: plot.maxY))
-        area.closeSubpath()
+        let fillRect = CGRect(
+            x: first.x,
+            y: plot.minY,
+            width: max(0, (points.last?.x ?? first.x) - first.x),
+            height: plot.height)
+        DitherRenderer.drawBayer(
+            in: &context,
+            rect: fillRect,
+            cellSize: 3,
+            color: color,
+            coverage: { sample in
+                guard let lineY = lineY(at: sample.x, through: points),
+                      sample.y >= lineY,
+                      sample.y <= plot.maxY
+                else { return 0 }
 
-        var fillContext = context
-        fillContext.clip(to: area)
-        DitherRenderer.drawAreaGradient(
-            in: &fillContext,
-            rect: plot,
-            points: points,
-            cellSize: 2,
-            maxDensity: provider == .claude ? 0.94 : 0.82,
-            opacity: provider == .claude ? 0.82 : 0.72,
-            phase: provider == .claude ? 0 : 1,
-            color: color)
+                let depth = (sample.y - lineY) / max(1, plot.maxY - lineY)
+                return 0.72 * pow(1 - Double(depth), 0.72)
+            })
 
         context.stroke(
             line,
@@ -379,6 +356,23 @@ private struct DitherDrawdownChart: View {
                 lineCap: .round,
                 lineJoin: .round,
                 dash: provider == .claude ? [] : [4, 3]))
+    }
+
+    private func lineY(at x: CGFloat, through points: [CGPoint]) -> CGFloat? {
+        guard let first = points.first, let last = points.last,
+              x >= first.x, x <= last.x
+        else { return nil }
+
+        for index in 0..<(points.count - 1) {
+            let start = points[index]
+            let end = points[index + 1]
+            guard x <= end.x else { continue }
+            let width = end.x - start.x
+            guard width > 0 else { return end.y }
+            let fraction = (x - start.x) / width
+            return start.y + (end.y - start.y) * fraction
+        }
+        return last.y
     }
 
     private func point(for sample: UsageSample, in plot: CGRect) -> CGPoint {
@@ -402,7 +396,7 @@ private struct WindowCell: View {
                     .font(.system(size: 15, weight: .medium, design: .rounded))
                     .monospacedDigit()
                 UsageProgress(value: window.remainingPercent / 100)
-                    .frame(height: 5)
+                    .frame(height: 6)
                 Text(resetText(window.resetsAt))
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -414,7 +408,7 @@ private struct WindowCell: View {
                     .font(.system(size: 15, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
                 UsageProgress(value: 0)
-                    .frame(height: 5)
+                    .frame(height: 6)
                 Text("unavailable")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
@@ -443,19 +437,35 @@ private struct UsageProgress: View {
             let width = proxy.size.width * min(1, max(0, value))
 
             ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(.primary.opacity(0.055))
-                HorizontalDitherGradient(
-                    spacing: 2,
-                    dotSize: 1.5,
-                    maxDensity: 1,
-                    opacity: 1)
-                    .frame(width: width)
-                    .clipShape(Capsule())
-                Capsule()
-                    .stroke(DitherPalette.blue.opacity(0.34), lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(DitherPalette.blue.opacity(0.1))
+                Canvas { context, size in
+                    let fillRect = CGRect(x: 0, y: 0, width: width, height: size.height)
+                    DitherRenderer.drawBayer(
+                        in: &context,
+                        rect: fillRect,
+                        cellSize: 3,
+                        color: DitherPalette.blue,
+                        coverage: { sample in
+                            guard width > 0 else { return 0 }
+                            let position = min(1, max(0, sample.x / width))
+                            return 0.12 + 0.88 * pow(Double(position), 1.35)
+                        })
+
+                    if width > 0 {
+                        let cap = CGRect(
+                            x: max(0, width - 3),
+                            y: 0,
+                            width: min(3, width),
+                            height: size.height)
+                        context.fill(Path(cap), with: .color(DitherPalette.blue))
+                    }
+                }
+                RoundedRectangle(cornerRadius: 1)
+                    .stroke(DitherPalette.blue.opacity(0.26), lineWidth: 0.5)
             }
         }
+        .animation(.easeOut(duration: 0.6), value: value)
         .accessibilityLabel("Usage remaining")
         .accessibilityValue("\(Int(value * 100)) percent")
     }
